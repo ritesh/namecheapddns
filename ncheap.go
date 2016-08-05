@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 )
 
@@ -30,28 +31,32 @@ type NameCheapXMLResponse struct {
 	Debug         []byte
 }
 
+const saveIPFile = "savedIPAddress.dat"
+
 func handleError(message string, err error) {
 	log.Printf("message %v", err)
 }
-func getSavedIP(savedIP string) (IP string, err error) {
-	f, err := os.Open(savedIP)
-	if os.IsNotExist(err) {
-		f, err = os.Create(savedIP)
-		if err != nil {
-			handleError("didnt find a savedIP file, could not create file", err)
-		}
-
-	} else if err != nil {
-		handleError("couldn't open file!", err)
+func getSavedIP() (IP string, err error) {
+	f, err := os.Open(saveIPFile)
+	switch err != nil {
+	case os.IsNotExist(err):
+		func(f *os.File) {
+			f, err := os.Create(saveIPFile)
+			if err != nil {
+				return
+			}
+		}(f)
+	default:
+		handleError("could not handle error!", err)
 	}
 	savedIPfromFile, err := ioutil.ReadAll(f)
 	if err != nil {
 		handleError("could not read file", err)
 	}
-	savedIP = string(savedIPfromFile)
+	savedIP := string(savedIPfromFile)
 	return savedIP, err
 }
-func saveToFile(saveIPFile, IP string) error {
+func saveToFile(IP string) error {
 	f, err := os.Open(saveIPFile)
 	if err != nil {
 		return err
@@ -64,13 +69,13 @@ func saveToFile(saveIPFile, IP string) error {
 func main() {
 	//## http://dynamicdns.park-your-domain.com/update?host=host_name&
 	// domain=domain.com&password=domain_password[&ip=your_ip]
-	params := make(map[string]string)
 	updateURL := "https://dynamicdns.park-your-domain.com/update?"
-	params["host"] = "@"
-	params["domain"] = "rsinha.xyz"
-	params["password"] = "pass"
-	savedIPFile := "savedIPAddress.dat"
-	savedIP, err := getSavedIP(savedIPFile)
+	params := map[string]string{
+		"host":     "@",
+		"domain":   "ritesh.xyz",
+		"password": "password",
+	}
+	savedIP, err := getSavedIP()
 	if err != nil {
 		handleError("could not get saved IP!", err)
 	} else {
@@ -89,29 +94,36 @@ func main() {
 	}
 	currentIP.Body.Close()
 	ip := string(a)
-	if ip != params["ip"] {
-		updateURL = fmt.Sprintf(updateURL+"host=%s&domain=%s&password=%s&ip=%v", params["host"], params["domain"], params["password"], params["ip"])
-		log.Printf(updateURL)
-		resp, err := http.Get(updateURL)
-		if err != nil {
-			handleError("could not update!", err)
-			return
-		}
-		a, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			handleError("could not read response body!", err)
-			return
-		}
-		n := &NameCheapXMLResponse{}
-		err = xml.Unmarshal(a, n)
-		if err != nil {
-			handleError("could not unmarshal response", err)
-		}
-		resp.Body.Close()
-		log.Printf("%v", n)
-		log.Printf("%v", n.Responses)
-		log.Printf("%v", n.Errors)
+	if ip == params["ip"] {
+		//No change here
+		return
 	}
-	saveToFile(savedIPFile, ip)
+	ncheapURL, err := url.Parse(updateURL)
+	if err != nil {
+		handleError("could not parse URL!", err)
+	}
+	updateURL = fmt.Sprintf(updateURL+"host=%s&domain=%s&password=%s&ip=%v", params["host"], params["domain"], params["password"], params["ip"])
+	log.Printf(updateURL)
+	resp, err := http.Get(ncheapURL.String())
+	if err != nil {
+		handleError("could not update!", err)
+		return
+	}
+	a, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		handleError("could not read response body!", err)
+		return
+	}
+	n := &NameCheapXMLResponse{}
+	err = xml.Unmarshal(a, n)
+	if err != nil {
+		handleError("could not unmarshal response", err)
+	}
+	resp.Body.Close()
+	log.Printf("%v", n)
+	log.Printf("%v", n.Responses)
+	log.Printf("%v", n.Errors)
+
+	saveToFile(ip)
 	return
 }
